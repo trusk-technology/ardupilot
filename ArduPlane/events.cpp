@@ -93,6 +93,7 @@ void Plane::rc_failsafe_short_on_event()
     case Mode::Number::CIRCLE:  // these modes never take any short failsafe action and continue
     case Mode::Number::TAKEOFF:
     case Mode::Number::RTL:
+    case Mode::Number::INTERCEPT:
 #if HAL_QUADPLANE_ENABLED
     case Mode::Number::QLAND:
     case Mode::Number::QRTL:
@@ -133,6 +134,7 @@ void Plane::failsafe_long_on_event(enum failsafe_state fstype, ModeReason reason
     case Mode::Number::LOITER:
     case Mode::Number::THERMAL:
     case Mode::Number::TAKEOFF:
+    case Mode::Number::INTERCEPT:
         if (plane.flight_stage == AP_FixedWing::FlightStage::TAKEOFF && !(g.fs_action_long == FS_ACTION_LONG_GLIDE || g.fs_action_long == FS_ACTION_LONG_PARACHUTE)) {
             // don't failsafe if in initial climb of TAKEOFF mode and FS action is not parachute or glide
             // long failsafe will be re-called if still in fs after initial climb

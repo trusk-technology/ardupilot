@@ -1,6 +1,7 @@
 #include "GCS_MAVLink_Plane.h"
 
 #include "Plane.h"
+#include <AP_Seeker/AP_Seeker.h>
 #include <AP_RPM/AP_RPM_config.h>
 #include <AP_Airspeed/AP_Airspeed_config.h>
 #include <AP_EFI/AP_EFI_config.h>
@@ -1045,12 +1046,14 @@ void GCS_MAVLINK_Plane::handle_seeker_target(const mavlink_message_t &msg)
 {
     mavlink_seeker_target_t pkt;
     mavlink_msg_seeker_target_decode(&msg, &pkt);
-    plane.seeker_state.los_rate_x     = pkt.los_rate_x;
-    plane.seeker_state.los_rate_y     = pkt.los_rate_y;
-    plane.seeker_state.centroid_x     = pkt.centroid_x;
-    plane.seeker_state.centroid_y     = pkt.centroid_y;
-    plane.seeker_state.target_found   = (pkt.target_found != 0);
-    plane.seeker_state.last_update_ms = AP_HAL::millis();
+    AP_Seeker::State s;
+    s.los_rate_x     = pkt.los_rate_x;
+    s.los_rate_y     = pkt.los_rate_y;
+    s.centroid_x     = pkt.centroid_x;
+    s.centroid_y     = pkt.centroid_y;
+    s.target_found   = (pkt.target_found != 0);
+    s.last_update_ms = AP_HAL::millis();
+    plane.seeker.handle_seeker_target(s);
 }
 
 void GCS_MAVLINK_Plane::handle_set_attitude_target(const mavlink_message_t &msg)

@@ -1,6 +1,7 @@
 #include "Copter.h"
 
 #include "GCS_Mavlink.h"
+#include <AP_Seeker/AP_Seeker.h>
 #include <AP_RPM/AP_RPM_config.h>
 #include <AP_EFI/AP_EFI_config.h>
 
@@ -1512,11 +1513,34 @@ void GCS_MAVLINK_Copter::handle_message(const mavlink_message_t &msg)
         copter.g2.toy_mode.handle_message(msg);
         break;
 #endif
+
+#if MODE_INTERCEPT_ENABLED
+    case MAVLINK_MSG_ID_SEEKER_TARGET:
+        handle_seeker_target_msg(msg);
+        break;
+#endif
+
     default:
         GCS_MAVLINK::handle_message(msg);
         break;
     }
 }
+
+#if MODE_INTERCEPT_ENABLED
+void GCS_MAVLINK_Copter::handle_seeker_target_msg(const mavlink_message_t &msg)
+{
+    mavlink_seeker_target_t pkt;
+    mavlink_msg_seeker_target_decode(&msg, &pkt);
+    AP_Seeker::State s;
+    s.los_rate_x     = pkt.los_rate_x;
+    s.los_rate_y     = pkt.los_rate_y;
+    s.centroid_x     = pkt.centroid_x;
+    s.centroid_y     = pkt.centroid_y;
+    s.target_found   = (pkt.target_found != 0);
+    s.last_update_ms = AP_HAL::millis();
+    AP::seeker()->handle_seeker_target(s);
+}
+#endif
 
 MAV_RESULT GCS_MAVLINK_Copter::handle_flight_termination(const mavlink_command_int_t &packet) {
 #if AP_COPTER_ADVANCED_FAILSAFE_ENABLED
@@ -1657,3 +1681,158 @@ uint8_t GCS_MAVLINK_Copter::high_latency_wind_direction() const
     return 0;
 }
 #endif // HAL_HIGH_LATENCY2_ENABLED
+/* send_available_mode not supported in 4.6.3 */
+#if 0
+uint8_t GCS_MAVLINK_Copter::send_available_mode(uint8_t index) const
+{
+    const Mode* modes[] {
+#if MODE_AUTO_ENABLED
+        &copter.mode_auto, // This auto is actually auto RTL!
+        &copter.mode_auto, // This one is really is auto!
+#endif
+#if MODE_ACRO_ENABLED
+        &copter.mode_acro,
+#endif
+        &copter.mode_stabilize,
+        &copter.mode_althold,
+#if MODE_CIRCLE_ENABLED
+        &copter.mode_circle,
+#endif
+#if MODE_LOITER_ENABLED
+        &copter.mode_loiter,
+#endif
+#if MODE_GUIDED_ENABLED
+        &copter.mode_guided,
+#endif
+        &copter.mode_land,
+#if MODE_RTL_ENABLED
+        &copter.mode_rtl,
+#endif
+#if MODE_DRIFT_ENABLED
+        &copter.mode_drift,
+#endif
+#if MODE_SPORT_ENABLED
+        &copter.mode_sport,
+#endif
+#if MODE_FLIP_ENABLED
+        &copter.mode_flip,
+#endif
+#if AUTOTUNE_ENABLED
+        &copter.mode_autotune,
+#endif
+#if MODE_POSHOLD_ENABLED
+        &copter.mode_poshold,
+#endif
+#if MODE_BRAKE_ENABLED
+        &copter.mode_brake,
+#endif
+#if MODE_THROW_ENABLED
+        &copter.mode_throw,
+#endif
+#if AP_ADSB_AVOIDANCE_ENABLED
+        &copter.mode_avoid_adsb,
+#endif
+#if MODE_GUIDED_NOGPS_ENABLED
+        &copter.mode_guided_nogps,
+#endif
+#if MODE_SMARTRTL_ENABLED
+        &copter.mode_smartrtl,
+#endif
+#if MODE_FLOWHOLD_ENABLED
+        (Mode*)copter.g2.mode_flowhold_ptr,
+#endif
+#if MODE_FOLLOW_ENABLED
+        &copter.mode_follow,
+#endif
+#if MODE_ZIGZAG_ENABLED
+        &copter.mode_zigzag,
+#endif
+#if MODE_SYSTEMID_ENABLED
+        (Mode *)copter.g2.mode_systemid_ptr,
+#endif
+#if MODE_AUTOROTATE_ENABLED
+        &copter.mode_autorotate,
+#endif
+#if MODE_TURTLE_ENABLED
+        &copter.mode_turtle,
+#endif
+#if MODE_INTERCEPT_ENABLED
+        &copter.mode_intercept,
+#endif
+    };
+
+    const uint8_t base_mode_count = ARRAY_SIZE(modes);
+    uint8_t mode_count = base_mode_count;
+
+#if AP_SCRIPTING_ENABLED
+    for (uint8_t i = 0; i < ARRAY_SIZE(copter.mode_guided_custom); i++) {
+        if (copter.mode_guided_custom[i] != nullptr) {
+            mode_count += 1;
+        }
+    }
+#endif
+
+    // Convert to zero indexed
+    const uint8_t index_zero = index - 1;
+    if (index_zero >= mode_count) {
+        // Mode does not exist!?
+        return mode_count;
+    }
+
+    // Ask the mode for its name and number
+    const char* name;
+    Mode::Number mode_number;
+    bool enabled;
+
+    if (index_zero < base_mode_count) {
+        name = modes[index_zero]->name();
+        mode_number = modes[index_zero]->mode_number();
+        enabled = modes[index_zero]->enabled();
+
+    } else {
+#if AP_SCRIPTING_ENABLED
+        const uint8_t custom_index = index_zero - base_mode_count;
+        if (copter.mode_guided_custom[custom_index] == nullptr) {
+            // Invalid index, should not happen
+            return mode_count;
+        }
+        name = copter.mode_guided_custom[custom_index]->name();
+        mode_number = copter.mode_guided_custom[custom_index]->mode_number();
+        enabled = true; // The script has actively added the mode, it must be enabled
+#else
+        // Should not endup here
+        return mode_count;
+#endif
+    }
+
+#if MODE_AUTO_ENABLED
+    // Auto RTL is odd
+    // Have to deal with is separately because its number and name can change depending on if were in it or not
+    if (index_zero == 0) {
+        mode_number = Mode::Number::AUTO_RTL;
+        name = "Auto RTL";
+
+    } else if (index_zero == 1) {
+        mode_number = Mode::Number::AUTO;
+        name = "Auto";
+
+    }
+#endif
+
+    // the check here must be the same as the one in `get_available_mode_enabled_mask`
+    const bool user_selectable = enabled && copter.gcs_mode_enabled(mode_number);
+
+    mavlink_msg_available_modes_send(
+        chan,
+        mode_count,
+        index,
+        MAV_STANDARD_MODE::MAV_STANDARD_MODE_NON_STANDARD,
+        (uint8_t)mode_number,
+        // MAV_MODE_PROPERTY bitmask,
+        user_selectable ? 0 : MAV_MODE_PROPERTY_NOT_USER_SELECTABLE,
+        name
+    );
+
+    return mode_count;
+}
+#endif // send_available_mode not supported in 4.6.3

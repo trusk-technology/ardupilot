@@ -685,6 +685,11 @@ public:
     AP_Float pldp_range_finder_maximum_m;
     AP_Float pldp_delay_s;
     AP_Float pldp_descent_speed_ms;
+
+#if MODE_INTERCEPT_ENABLED
+    void *mode_intercept_ptr;
+#endif
+
 };
 
 extern const AP_Param::Info        var_info[];

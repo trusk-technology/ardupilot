@@ -174,6 +174,7 @@ public:
     friend class ModeThermal;
     friend class ModeLoiterAltQLand;
 
+    friend class ModeIntercept;
 #if AP_EXTERNAL_CONTROL_ENABLED
     friend class AP_ExternalControl_Plane;
 #endif
@@ -334,6 +335,7 @@ private:
 #if HAL_SOARING_ENABLED
     ModeThermal mode_thermal;
 #endif
+    ModeIntercept mode_intercept;
 
 #if AP_QUICKTUNE_ENABLED
     AP_Quicktune quicktune;
@@ -667,6 +669,16 @@ private:
 
     // The instantaneous desired pitch angle.  Hundredths of a degree
     int32_t nav_pitch_cd;
+
+    // Seeker state for INTERCEPT mode — populated by SEEKER_TARGET MAVLink messages
+    struct {
+        float    los_rate_x;       // rad/s, seeker X axis
+        float    los_rate_y;       // rad/s, seeker Y axis
+        float    centroid_x;       // fraction of FOV width  (-0.5…0.5)
+        float    centroid_y;       // fraction of FOV height (-0.5…0.5)
+        uint32_t last_update_ms;
+        bool     target_found;
+    } seeker_state;
 
     // the aerodynamic load factor. This is calculated from the demanded
     // roll before the roll is clipped, using 1/sqrt(cos(nav_roll))

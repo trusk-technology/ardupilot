@@ -85,6 +85,10 @@ void GCS_Plane::update_vehicle_sensor_status_flags(void)
 
     case Mode::Number::INITIALISING:
         break;
+    case Mode::Number::INTERCEPT:
+        rate_controlled = true;
+        attitude_stabilized = true;
+        break;
     }
 
     if (rate_controlled) {

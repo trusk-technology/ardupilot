@@ -74,6 +74,9 @@ uint8_t GCS_MAVLINK_Plane::base_mode() const
         break;
     case Mode::Number::INITIALISING:
         break;
+    case Mode::Number::INTERCEPT:
+        _base_mode = MAV_MODE_FLAG_STABILIZE_ENABLED;
+        break;
     }
 
     if (!plane.training_manual_pitch || !plane.training_manual_roll) {
@@ -1028,11 +1031,27 @@ void GCS_MAVLINK_Plane::handle_message(const mavlink_message_t &msg)
         handle_set_position_target_global_int(msg);
         break;
 
+    case MAVLINK_MSG_ID_SEEKER_TARGET:
+        handle_seeker_target(msg);
+        break;
+
     default:
         GCS_MAVLINK::handle_message(msg);
         break;
     } // end switch
 } // end handle mavlink
+
+void GCS_MAVLINK_Plane::handle_seeker_target(const mavlink_message_t &msg)
+{
+    mavlink_seeker_target_t pkt;
+    mavlink_msg_seeker_target_decode(&msg, &pkt);
+    plane.seeker_state.los_rate_x     = pkt.los_rate_x;
+    plane.seeker_state.los_rate_y     = pkt.los_rate_y;
+    plane.seeker_state.centroid_x     = pkt.centroid_x;
+    plane.seeker_state.centroid_y     = pkt.centroid_y;
+    plane.seeker_state.target_found   = (pkt.target_found != 0);
+    plane.seeker_state.last_update_ms = AP_HAL::millis();
+}
 
 void GCS_MAVLINK_Plane::handle_set_attitude_target(const mavlink_message_t &msg)
     {
@@ -1334,6 +1353,7 @@ uint8_t GCS_MAVLINK_Plane::send_available_mode(uint8_t index) const
 #if MODE_AUTOLAND_ENABLED
         &plane.mode_autoland,
 #endif
+        &plane.mode_intercept,
     };
 
     const uint8_t fw_mode_count = ARRAY_SIZE(fw_modes);

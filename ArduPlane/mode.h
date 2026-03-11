@@ -70,6 +70,7 @@ public:
 #if MODE_AUTOLAND_ENABLED
         AUTOLAND      = 26,
 #endif
+        INTERCEPT     = 27,
 
     // Mode number 30 reserved for "offboard" for external/lua control.
     };
@@ -1038,6 +1039,31 @@ protected:
     void set_autoland_direction(const float heading);
 };
 #endif
+
+class ModeIntercept : public Mode
+{
+public:
+    Number mode_number() const override { return Number::INTERCEPT; }
+    const char *name() const override { return "Intercept"; }
+    const char *name4() const override { return "INTC"; }
+
+    void update() override;
+
+    // We output throttle directly; no TECS altitude hold
+    bool does_auto_throttle() const override { return false; }
+
+    static const struct AP_Param::GroupInfo var_info[];
+
+    AP_Float throttle;      // INTERCEPT_THR  — fixed throttle % (0–100)
+    AP_Float roll_gain;     // INTERCEPT_ROLL — (centi-deg) / (rad/s)
+    AP_Float pitch_gain;    // INTERCEPT_PTCH — (centi-deg) / (rad/s)
+    AP_Float seeker_ang;    // INTERCEPT_ANG  — seeker mount offset from forward (deg), default 0
+    AP_Float timeout_ms;    // INTERCEPT_TOUT — seeker data timeout (ms), default 500
+
+protected:
+    bool _enter() override;
+};
+
 #if HAL_SOARING_ENABLED
 
 class ModeThermal: public Mode

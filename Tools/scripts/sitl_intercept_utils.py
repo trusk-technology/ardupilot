@@ -16,8 +16,15 @@ from pymavlink import mavutil  # noqa: E402  (import after sys.path tweak)
 def connect(url, source_system=255):
     """Connect to SITL at *url*, request all data streams, return the connection."""
     print(f'Connecting to {url} …')
-    mav = mavutil.mavlink_connection(url, source_system=source_system)
-    mav.wait_heartbeat()
+    # autoreconnect=True: the SITL can transiently close SERIAL0 (e.g. during
+    # defaults loading or EKF init) and pymavlink will silently reconnect.
+    mav = mavutil.mavlink_connection(url, source_system=source_system,
+                                     autoreconnect=True)
+    # Drain messages until we see a HEARTBEAT, with a wall-clock deadline.
+    # Use blocking=True with a timeout so we don't busy-spin.
+    hb = mav.recv_match(type='HEARTBEAT', blocking=True, timeout=30)
+    if hb is None:
+        raise RuntimeError(f'No heartbeat from {url} within 30 s — is SITL running?')
     print(f'Heartbeat: sysid={mav.target_system} mode={mav.flightmode}')
     # Bare SITL binary doesn't auto-start telemetry; request everything.
     mav.mav.request_data_stream_send(

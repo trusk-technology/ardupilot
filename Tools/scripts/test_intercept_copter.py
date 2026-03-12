@@ -12,9 +12,8 @@ import sys
 import time
 import argparse
 
-# Use the ArduPilot bundled mavlink for SEEKER_TARGET support
-sys.path.insert(0, '/home/tom/ardupilot/modules/mavlink')
-
+from sitl_intercept_utils import (
+    connect, send_cmd, set_mode, set_param, get_relative_alt, wait_ekf_ready)
 from pymavlink import mavutil
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -30,50 +29,9 @@ parser.add_argument('--seeker-tout', type=float, default=10.0,
 args = parser.parse_args()
 
 # ── Connect ──────────────────────────────────────────────────────────────────
-print(f'Connecting to {args.connect} …')
-mav = mavutil.mavlink_connection(args.connect, source_system=255)
-mav.wait_heartbeat()
-print(f'Heartbeat: sysid={mav.target_system} cmpid={mav.target_component} '
-      f'mode={mav.flightmode}')
+mav = connect(args.connect)
 
-# Request telemetry streams (bare SITL binary doesn't auto-start them)
-mav.mav.request_data_stream_send(
-    mav.target_system, mav.target_component,
-    mavutil.mavlink.MAV_DATA_STREAM_ALL, 10, 1)
-time.sleep(0.5)
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-def send_cmd(cmd, p1=0, p2=0, p3=0, p4=0, p5=0, p6=0, p7=0):
-    mav.mav.command_long_send(
-        mav.target_system, mav.target_component,
-        cmd, 0, p1, p2, p3, p4, p5, p6, p7)
-
-def set_mode(mode_id):
-    mav.mav.set_mode_send(mav.target_system,
-                          mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-                          mode_id)
-
-def set_param(name, value):
-    mav.mav.param_set_send(
-        mav.target_system, mav.target_component,
-        name.encode(), value, mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
-    mav.recv_match(type='PARAM_VALUE', blocking=True, timeout=3)
-
-def get_relative_alt_m():
-    """Return relative altitude in metres (above takeoff point)."""
-    msg = None
-    for _ in range(50):
-        m = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
-        if m:
-            msg = m
-        else:
-            break
-    if msg is None:
-        msg = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=2)
-    if msg is None:
-        return None, None
-    return msg.relative_alt / 1e3, msg   # relative_alt is mm
-
+# ── Geometry helpers ─────────────────────────────────────────────────────────
 def get_pos():
     """Return (lat_deg, lon_deg, alt_m_amsl, yaw_deg) from GLOBAL_POSITION_INT."""
     msg = None
@@ -102,61 +60,18 @@ def elevation_to(alt_vehicle, target_alt_amsl, distance_m):
     """Return elevation angle (rad) from vehicle to target."""
     if distance_m < 1.0:
         return 0.0
-    dalt = target_alt_amsl - alt_vehicle
-    return math.atan2(dalt, distance_m)
+    return math.atan2(target_alt_amsl - alt_vehicle, distance_m)
 
 def haversine_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    a = (math.sin(dlat/2)**2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2)
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# ── Step 0: Wait for EKF to become active ────────────────────────────────────
-print('\n── Step 0: Waiting for EKF active ──')
-print('(watching STATUSTEXT…)', end='', flush=True)
-t_boot = time.monotonic()
-ekf_active = False
-ready = False
-while not (ekf_active and ready):
-    msg = mav.recv_match(type='STATUSTEXT', blocking=True, timeout=2)
-    if msg:
-        text = msg.text
-        print(f'\n  [{time.monotonic()-t_boot:.1f}s] {text}', end='', flush=True)
-        if 'EKF' in text and 'active' in text:
-            ekf_active = True
-        if 'Ready' in text:
-            ready = True
-    if time.monotonic() - t_boot > 60:
-        print(f'\n  timeout (ekf_active={ekf_active} ready={ready}) — proceeding')
-        break
-print()
-
-# Wait for EKF origin to be set AND position estimate to be valid
-print('Waiting for EKF GPS lock and position …', end='', flush=True)
-t_origin = time.monotonic()
-origin_count = 0
-while True:
-    msg = mav.recv_match(type=['STATUSTEXT', 'EKF_STATUS_REPORT'],
-                         blocking=True, timeout=2)
-    if msg:
-        if msg.get_type() == 'STATUSTEXT':
-            text = msg.text
-            print(f'\n  [{time.monotonic()-t_origin:.1f}s] {text}', end='', flush=True)
-            if 'origin set' in text.lower():
-                origin_count += 1
-        elif msg.get_type() == 'EKF_STATUS_REPORT':
-            # flags bit 3 (0x08) = pred_horiz_pos_rel, bit 4 (0x10) = pred_horiz_pos_abs
-            # bit 8 (0x100) = horiz_pos_abs, bit 9 (0x200) = horiz_pos_rel
-            if msg.flags & 0x108:  # horiz_pos_abs or pred_horiz_pos_abs + pred_rel
-                print(f'\n  EKF_STATUS_REPORT flags=0x{msg.flags:04x} — position ready')
-                break
-    if time.monotonic() - t_origin > 40:
-        print(f' timeout (origins={origin_count}) — proceeding anyway')
-        break
-print()
-# Give position + altitude estimate time to stabilise
-time.sleep(3)
+# ── Step 0: Wait for EKF ─────────────────────────────────────────────────────
+wait_ekf_ready(mav, settle=3)
 
 # ── Step 1: Set INTC_ params, arm in STABILIZE, switch to GUIDED ─────────────
 print('\n── Step 1: Set INTC_ params, arm, guided ──')
@@ -164,14 +79,13 @@ print('\n── Step 1: Set INTC_ params, arm, guided ──')
 # Set INTC_ params explicitly (AP_SUBGROUPPTR init ordering can leave them 0)
 for name, val in [('INTC_SPEED', 3.0), ('INTC_YAW_P', 2.0), ('INTC_YAW_D', 0.3),
                   ('INTC_VRT_P', 3.0), ('INTC_ACMP', 0.5), ('INTC_TOUT', 500.0)]:
-    set_param(name, val)
+    set_param(mav, name, val)
     print(f'  {name} = {val}')
 
-# Arm in STABILIZE — no position estimate required (alt_checks still applies,
-# but ekf_alt_ok() should pass once EKF3 is active)
-set_mode(0)  # STABILIZE
+# Arm in STABILIZE — no position estimate required
+set_mode(mav, 0)  # STABILIZE
 time.sleep(0.5)
-send_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, p1=1, p2=2989)
+send_cmd(mav, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, p1=1, p2=2989)
 ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
 print(f'ARM ack: result={ack.result if ack else "no ack"}')
 if not ack or ack.result != 0:
@@ -179,23 +93,22 @@ if not ack or ack.result != 0:
     sys.exit(1)
 
 # Switch to GUIDED for takeoff
-set_mode(4)  # GUIDED
+set_mode(mav, 4)  # GUIDED
 time.sleep(1)
 
 # ── Step 2: Takeoff ───────────────────────────────────────────────────────────
 print(f'\n── Step 2: Takeoff to {args.takeoff_alt} m ──')
-send_cmd(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, p7=args.takeoff_alt)
+send_cmd(mav, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, p7=args.takeoff_alt)
 ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
 print(f'TAKEOFF ack: result={ack.result if ack else "no ack"}')
 if ack and ack.result != 0:
     print('TAKEOFF FAILED — aborting')
     sys.exit(1)
 
-# Wait for relative altitude (not AMSL)
 print('Waiting for altitude …', end='', flush=True)
 deadline = time.monotonic() + 60
 while time.monotonic() < deadline:
-    rel_alt, _ = get_relative_alt_m()
+    rel_alt = get_relative_alt(mav)
     if rel_alt is not None and rel_alt > args.takeoff_alt * 0.75:
         print(f' reached {rel_alt:.1f} m AGL')
         break
@@ -207,10 +120,9 @@ else:
 
 # ── Step 3: Switch to INTERCEPT (mode 29) ────────────────────────────────────
 print('\n── Step 3: Switch to INTERCEPT mode 29 ──')
-set_mode(29)
+set_mode(mav, 29)
 time.sleep(1.5)
 
-# Confirm — flush until we get a heartbeat
 hb = mav.recv_match(type='HEARTBEAT', blocking=True, timeout=5)
 if hb:
     print(f'Mode after switch: custom_mode={hb.custom_mode}')
@@ -240,7 +152,6 @@ print(f"\n{'t(s)':>6} {'dist(m)':>8} {'az_err(°)':>10} {'el_err(°)':>10} "
 while True:
     t = time.monotonic() - t_start
 
-    # Kill seeker data after timeout to test position-hold fallback
     if t > args.seeker_tout and seeker_live:
         seeker_live = False
         print(f'\n[t={t:.1f}s] SEEKER DATA STOPPED — expecting position hold …')
@@ -253,16 +164,12 @@ while True:
     lat, lon, alt, hdg_deg = pos
     dist = haversine_m(lat, lon, args.target_lat, args.target_lon)
 
-    # Body-frame azimuth error (positive = target to the right)
     az_world = bearing_to(lat, lon, args.target_lat, args.target_lon)
     yaw_rad  = math.radians(hdg_deg) if hdg_deg < 999 else 0.0
-    az_err   = az_world - yaw_rad
-    # Wrap to ±π
-    az_err = (az_err + math.pi) % (2 * math.pi) - math.pi
+    az_err   = (az_world - yaw_rad + math.pi) % (2 * math.pi) - math.pi
 
-    el_err = elevation_to(alt, args.target_alt, dist)  # positive = target above
+    el_err = elevation_to(alt, args.target_alt, dist)
 
-    # LOS rates (derivative)
     now = time.monotonic()
     if prev_az is not None and (now - prev_time) > 0:
         dt = now - prev_time
@@ -273,20 +180,13 @@ while True:
         los_rate_y = 0.0
     prev_az, prev_el, prev_time = az_err, el_err, now
 
-    # Map to centroid fractions (clamp to ±1)
     cx = max(-1.0, min(1.0, az_err / HFOV))
     cy = max(-1.0, min(1.0, el_err / VFOV))
 
     if seeker_live:
         tboot = int(time.monotonic() * 1000) & 0xFFFFFFFF
-        target_found = 1
-        mav.mav.seeker_target_send(
-            tboot,
-            los_rate_x, los_rate_y,
-            cx, cy,
-            target_found)
+        mav.mav.seeker_target_send(tboot, los_rate_x, los_rate_y, cx, cy, 1)
 
-    # Get yaw rate for display
     att = mav.recv_match(type='ATTITUDE', blocking=False)
     yaw_rate = att.yawspeed if att else float('nan')
 
@@ -294,14 +194,12 @@ while True:
           f'{math.degrees(el_err):10.2f} {cx:7.3f} {cy:7.3f} '
           f'{yaw_rate:10.3f} {"LIVE" if seeker_live else "DEAD":>8}')
 
-    # Stop after seeker_tout + 10s total
     if t > args.seeker_tout + 10.0:
         print(f'\n── Test complete ──')
         break
 
     time.sleep(0.1)
 
-# Final position
 pos = get_pos()
 if pos:
     print(f'Final position: lat={pos[0]:.6f}, lon={pos[1]:.6f}, alt={pos[2]:.1f} m AMSL')

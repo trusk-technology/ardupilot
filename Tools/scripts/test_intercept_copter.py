@@ -53,9 +53,29 @@ def set_mode(mode_id):
                           mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                           mode_id)
 
+def set_param(name, value):
+    mav.mav.param_set_send(
+        mav.target_system, mav.target_component,
+        name.encode(), value, mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+    mav.recv_match(type='PARAM_VALUE', blocking=True, timeout=3)
+
+def get_relative_alt_m():
+    """Return relative altitude in metres (above takeoff point)."""
+    msg = None
+    for _ in range(50):
+        m = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
+        if m:
+            msg = m
+        else:
+            break
+    if msg is None:
+        msg = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=2)
+    if msg is None:
+        return None, None
+    return msg.relative_alt / 1e3, msg   # relative_alt is mm
+
 def get_pos():
     """Return (lat_deg, lon_deg, alt_m_amsl, yaw_deg) from GLOBAL_POSITION_INT."""
-    # Drain queue to get freshest message
     msg = None
     for _ in range(50):
         m = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
@@ -92,42 +112,114 @@ def haversine_m(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# ── Step 1: Set GUIDED mode and arm ─────────────────────────────────────────
-print('\n── Step 1: Set GUIDED and arm ──')
+# ── Step 0: Wait for EKF to become active ────────────────────────────────────
+print('\n── Step 0: Waiting for EKF active ──')
+print('(watching STATUSTEXT…)', end='', flush=True)
+t_boot = time.monotonic()
+ekf_active = False
+ready = False
+while not (ekf_active and ready):
+    msg = mav.recv_match(type='STATUSTEXT', blocking=True, timeout=2)
+    if msg:
+        text = msg.text
+        print(f'\n  [{time.monotonic()-t_boot:.1f}s] {text}', end='', flush=True)
+        if 'EKF' in text and 'active' in text:
+            ekf_active = True
+        if 'Ready' in text:
+            ready = True
+    if time.monotonic() - t_boot > 60:
+        print(f'\n  timeout (ekf_active={ekf_active} ready={ready}) — proceeding')
+        break
+print()
+
+# Wait for EKF origin to be set AND position estimate to be valid
+print('Waiting for EKF GPS lock and position …', end='', flush=True)
+t_origin = time.monotonic()
+origin_count = 0
+while True:
+    msg = mav.recv_match(type=['STATUSTEXT', 'EKF_STATUS_REPORT'],
+                         blocking=True, timeout=2)
+    if msg:
+        if msg.get_type() == 'STATUSTEXT':
+            text = msg.text
+            print(f'\n  [{time.monotonic()-t_origin:.1f}s] {text}', end='', flush=True)
+            if 'origin set' in text.lower():
+                origin_count += 1
+        elif msg.get_type() == 'EKF_STATUS_REPORT':
+            # flags bit 3 (0x08) = pred_horiz_pos_rel, bit 4 (0x10) = pred_horiz_pos_abs
+            # bit 8 (0x100) = horiz_pos_abs, bit 9 (0x200) = horiz_pos_rel
+            if msg.flags & 0x108:  # horiz_pos_abs or pred_horiz_pos_abs + pred_rel
+                print(f'\n  EKF_STATUS_REPORT flags=0x{msg.flags:04x} — position ready')
+                break
+    if time.monotonic() - t_origin > 40:
+        print(f' timeout (origins={origin_count}) — proceeding anyway')
+        break
+print()
+# Give position + altitude estimate time to stabilise
+time.sleep(3)
+
+# ── Step 1: Set INTC_ params, arm in STABILIZE, switch to GUIDED ─────────────
+print('\n── Step 1: Set INTC_ params, arm, guided ──')
+
+# Set INTC_ params explicitly (AP_SUBGROUPPTR init ordering can leave them 0)
+for name, val in [('INTC_SPEED', 3.0), ('INTC_YAW_P', 2.0), ('INTC_YAW_D', 0.3),
+                  ('INTC_VRT_P', 3.0), ('INTC_ACMP', 0.5), ('INTC_TOUT', 500.0)]:
+    set_param(name, val)
+    print(f'  {name} = {val}')
+
+# Arm in STABILIZE — no position estimate required (alt_checks still applies,
+# but ekf_alt_ok() should pass once EKF3 is active)
+set_mode(0)  # STABILIZE
+time.sleep(0.5)
+send_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, p1=1, p2=2989)
+ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
+print(f'ARM ack: result={ack.result if ack else "no ack"}')
+if not ack or ack.result != 0:
+    print('ARM FAILED — aborting')
+    sys.exit(1)
+
+# Switch to GUIDED for takeoff
 set_mode(4)  # GUIDED
 time.sleep(1)
-
-# Force-arm
-send_cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, p1=1, p2=21196)
-ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
-print(f'ARM ack: {ack}')
-time.sleep(2)
 
 # ── Step 2: Takeoff ───────────────────────────────────────────────────────────
 print(f'\n── Step 2: Takeoff to {args.takeoff_alt} m ──')
 send_cmd(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, p7=args.takeoff_alt)
 ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
-print(f'TAKEOFF ack: {ack}')
+print(f'TAKEOFF ack: result={ack.result if ack else "no ack"}')
+if ack and ack.result != 0:
+    print('TAKEOFF FAILED — aborting')
+    sys.exit(1)
 
-# Wait for altitude
+# Wait for relative altitude (not AMSL)
 print('Waiting for altitude …', end='', flush=True)
-while True:
-    pos = get_pos()
-    if pos and pos[2] > args.takeoff_alt * 0.75:
-        print(f' reached {pos[2]:.1f} m')
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline:
+    rel_alt, _ = get_relative_alt_m()
+    if rel_alt is not None and rel_alt > args.takeoff_alt * 0.75:
+        print(f' reached {rel_alt:.1f} m AGL')
         break
     print('.', end='', flush=True)
     time.sleep(1)
+else:
+    print(' TIMEOUT waiting for altitude — aborting')
+    sys.exit(1)
 
 # ── Step 3: Switch to INTERCEPT (mode 29) ────────────────────────────────────
 print('\n── Step 3: Switch to INTERCEPT mode 29 ──')
 set_mode(29)
-time.sleep(1)
+time.sleep(1.5)
 
-# Confirm
+# Confirm — flush until we get a heartbeat
 hb = mav.recv_match(type='HEARTBEAT', blocking=True, timeout=5)
 if hb:
     print(f'Mode after switch: custom_mode={hb.custom_mode}')
+    if hb.custom_mode != 29:
+        print(f'ERROR: mode switch to 29 REJECTED (got {hb.custom_mode}) — aborting')
+        sys.exit(1)
+else:
+    print('No heartbeat received — aborting')
+    sys.exit(1)
 
 # ── Step 4: Main loop — send seeker data, monitor convergence ────────────────
 print(f'\n── Step 4: Seeker loop (will run {args.seeker_tout}s then go silent) ──')
@@ -202,7 +294,7 @@ while True:
           f'{math.degrees(el_err):10.2f} {cx:7.3f} {cy:7.3f} '
           f'{yaw_rate:10.3f} {"LIVE" if seeker_live else "DEAD":>8}')
 
-    # Stop after 20s total
+    # Stop after seeker_tout + 10s total
     if t > args.seeker_tout + 10.0:
         print(f'\n── Test complete ──')
         break
@@ -212,4 +304,4 @@ while True:
 # Final position
 pos = get_pos()
 if pos:
-    print(f'Final position: lat={pos[0]:.6f}, lon={pos[1]:.6f}, alt={pos[2]:.1f} m')
+    print(f'Final position: lat={pos[0]:.6f}, lon={pos[1]:.6f}, alt={pos[2]:.1f} m AMSL')

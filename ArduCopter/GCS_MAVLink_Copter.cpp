@@ -1,6 +1,7 @@
 #include "Copter.h"
 
 #include "GCS_MAVLink_Copter.h"
+#include <AP_Seeker/AP_Seeker.h>
 #include <AP_RPM/AP_RPM_config.h>
 #include <AP_EFI/AP_EFI_config.h>
 
@@ -1227,11 +1228,34 @@ void GCS_MAVLINK_Copter::handle_message(const mavlink_message_t &msg)
         copter.g2.toy_mode.handle_message(msg);
         break;
 #endif
+
+#if MODE_INTERCEPT_ENABLED
+    case MAVLINK_MSG_ID_SEEKER_TARGET:
+        handle_seeker_target_msg(msg);
+        break;
+#endif
+
     default:
         GCS_MAVLINK::handle_message(msg);
         break;
     }
 }
+
+#if MODE_INTERCEPT_ENABLED
+void GCS_MAVLINK_Copter::handle_seeker_target_msg(const mavlink_message_t &msg)
+{
+    mavlink_seeker_target_t pkt;
+    mavlink_msg_seeker_target_decode(&msg, &pkt);
+    AP_Seeker::State s;
+    s.los_rate_x     = pkt.los_rate_x;
+    s.los_rate_y     = pkt.los_rate_y;
+    s.centroid_x     = pkt.centroid_x;
+    s.centroid_y     = pkt.centroid_y;
+    s.target_found   = (pkt.target_found != 0);
+    s.last_update_ms = AP_HAL::millis();
+    AP::seeker()->handle_seeker_target(s);
+}
+#endif
 
 MAV_RESULT GCS_MAVLINK_Copter::handle_flight_termination(const mavlink_command_int_t &packet) {
 #if AP_COPTER_ADVANCED_FAILSAFE_ENABLED
@@ -1447,6 +1471,9 @@ uint8_t GCS_MAVLINK_Copter::send_available_mode(uint8_t index) const
 #endif
 #if MODE_TURTLE_ENABLED
         &copter.mode_turtle,
+#endif
+#if MODE_INTERCEPT_ENABLED
+        &copter.mode_intercept,
 #endif
     };
 

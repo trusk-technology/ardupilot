@@ -152,6 +152,11 @@ Mode *Copter::mode_from_mode_num(const Mode::Number mode)
             return &mode_turtle;
 #endif
 
+#if MODE_INTERCEPT_ENABLED
+        case Mode::Number::INTERCEPT:
+            return &mode_intercept;
+#endif
+
         default:
             break;
     }
@@ -208,7 +213,10 @@ bool Copter::gcs_mode_enabled(const Mode::Number mode_num)
         (uint8_t)Mode::Number::SYSTEMID,
         (uint8_t)Mode::Number::AUTOROTATE,
         (uint8_t)Mode::Number::AUTO_RTL,
-        (uint8_t)Mode::Number::TURTLE
+        (uint8_t)Mode::Number::TURTLE,
+#if MODE_INTERCEPT_ENABLED
+        (uint8_t)Mode::Number::INTERCEPT,
+#endif
     };
 
     return !block_GCS_mode_change((uint8_t)mode_num, mode_list, ARRAY_SIZE(mode_list));
@@ -286,6 +294,9 @@ uint32_t Copter::get_available_mode_enabled_mask() const
 #endif
 #if MODE_TURTLE_ENABLED
         &copter.mode_turtle,
+#endif
+#if MODE_INTERCEPT_ENABLED
+        &copter.mode_intercept,
 #endif
     };
 

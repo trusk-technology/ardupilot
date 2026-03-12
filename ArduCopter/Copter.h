@@ -60,6 +60,7 @@
 #include <AC_InputManager/AC_InputManager_Heli.h>   // Heli specific pilot input handling library
 #include <AP_Arming/AP_Arming.h>            // ArduPilot motor arming library
 #include <AP_SmartRTL/AP_SmartRTL.h>        // ArduPilot Smart Return To Launch Mode (SRTL) library
+#include <AP_Seeker/AP_Seeker.h>            // Seeker target singleton for INTERCEPT mode
 #include <AP_TempCalibration/AP_TempCalibration.h>  // temperature calibration library
 #include <AC_AutoTune/AC_AutoTune_Multi.h>  // ArduCopter autotune library. support for autotune of multirotors.
 #include <AC_AutoTune/AC_AutoTune_Heli.h>   // ArduCopter autotune library. support for autotune of helicopters.
@@ -227,6 +228,9 @@ public:
     friend class ModeZigZag;
     friend class ModeAutorotate;
     friend class ModeTurtle;
+#if MODE_INTERCEPT_ENABLED
+    friend class ModeIntercept;
+#endif
 
     friend class _AutoTakeoff;
 
@@ -239,6 +243,9 @@ private:
     // Global parameters are all contained within the 'g' class.
     Parameters g;
     ParametersG2 g2;
+
+    // Seeker singleton — owns the instance for both modes
+    AP_Seeker seeker;
 
     // used to detect MAVLink acks from GCS to stop compassmot
     uint8_t command_ack_counter;
@@ -1102,6 +1109,9 @@ private:
 #endif
 #if MODE_TURTLE_ENABLED
     ModeTurtle mode_turtle;
+#endif
+#if MODE_INTERCEPT_ENABLED
+    ModeIntercept mode_intercept;
 #endif
 
     // mode.cpp

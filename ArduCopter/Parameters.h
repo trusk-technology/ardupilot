@@ -703,6 +703,10 @@ public:
     void *mode_poshold_ptr;
 #endif
 
+#if MODE_INTERCEPT_ENABLED
+    void *mode_intercept_ptr;
+#endif
+
 };
 
 extern const AP_Param::Info        var_info[];

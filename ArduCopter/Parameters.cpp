@@ -1169,6 +1169,12 @@ const AP_Param::GroupInfo ParametersG2::var_info2[] = {
     // @Increment: 0.1
     AP_GROUPINFO("PILOT_TKO_ALT_M", 20, ParametersG2, pilot_takeoff_alt_m, PILOT_TKO_ALT_M_DEFAULT),
 
+#if MODE_INTERCEPT_ENABLED
+    // @Group: INTC_
+    // @Path: mode_intercept.cpp
+    AP_SUBGROUPPTR(mode_intercept_ptr, "INTC_", 21, ParametersG2, ModeIntercept),
+#endif
+
     // ID 62 is reserved for the AP_SUBGROUPEXTENSION
 
     AP_GROUPEND
@@ -1237,6 +1243,9 @@ ParametersG2::ParametersG2(void) :
     ,mode_land_ptr(&copter.mode_land)
 #if MODE_POSHOLD_ENABLED
     ,mode_poshold_ptr(&copter.mode_poshold)
+#endif
+#if MODE_INTERCEPT_ENABLED
+    ,mode_intercept_ptr(&copter.mode_intercept)
 #endif
 {
     AP_Param::setup_object_defaults(this, var_info);

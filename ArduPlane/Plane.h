@@ -83,6 +83,7 @@
 #include <AP_Landing/AP_Landing.h>
 #include <AP_LandingGear/AP_LandingGear.h>     // Landing Gear library
 #include <AP_Follow/AP_Follow.h>
+#include <AP_Seeker/AP_Seeker.h>
 #include <AP_ExternalControl/AP_ExternalControl_config.h>
 #if AP_EXTERNAL_CONTROL_ENABLED
 #include "AP_ExternalControl_Plane.h"
@@ -671,15 +672,8 @@ private:
     // The instantaneous desired pitch angle.  Hundredths of a degree
     int32_t nav_pitch_cd;
 
-    // Seeker state for INTERCEPT mode — populated by SEEKER_TARGET MAVLink messages
-    struct {
-        float    los_rate_x;       // rad/s, seeker X axis
-        float    los_rate_y;       // rad/s, seeker Y axis
-        float    centroid_x;       // fraction of FOV width  (-0.5…0.5)
-        float    centroid_y;       // fraction of FOV height (-0.5…0.5)
-        uint32_t last_update_ms;
-        bool     target_found;
-    } seeker_state;
+    // Seeker singleton — populated by SEEKER_TARGET MAVLink messages
+    AP_Seeker seeker;
 
     // the aerodynamic load factor. This is calculated from the demanded
     // roll before the roll is clipped, using 1/cos(nav_roll)

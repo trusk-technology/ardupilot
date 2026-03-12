@@ -101,6 +101,9 @@ public:
         AUTOROTATE =   26,  // Autonomous autorotation
         AUTO_RTL =     27,  // Auto RTL, this is not a true mode, AUTO will report as this mode if entered to perform a DO_LAND_START Landing sequence
         TURTLE =       28,  // Flip over after crash
+#if MODE_INTERCEPT_ENABLED
+        INTERCEPT =    29,  // FOV-holding seeker intercept
+#endif
 
         // Mode number 30 reserved for "offboard" for external/lua control.
 
@@ -2150,5 +2153,39 @@ private:
         LANDED,
     } current_phase;
 
+};
+#endif
+
+#if MODE_INTERCEPT_ENABLED
+class ModeIntercept : public Mode {
+
+public:
+    // inherit constructor
+    using Mode::Mode;
+    Number mode_number() const override { return Number::INTERCEPT; }
+
+    bool init(bool ignore_checks) override;
+    void run() override;
+
+    bool is_autopilot() const override { return true; }
+    bool requires_position() const override { return true; }
+    bool has_manual_throttle() const override { return false; }
+    bool allows_arming(AP_Arming::Method method) const override { return false; }
+
+    static const AP_Param::GroupInfo var_info[];
+
+protected:
+    const char *name()  const override { return "INTERCEPT"; }
+    const char *name4() const override { return "INTC"; }
+
+private:
+    void run_position_hold();
+
+    AP_Float speed;       // INTC_SPEED forward approach speed (m/s)
+    AP_Float yaw_p;       // INTC_YAW_P proportional yaw gain (rad/s per unit centroid_x)
+    AP_Float yaw_d;       // INTC_YAW_D derivative yaw gain (rad/s per unit los_rate_x)
+    AP_Float vrt_p;       // INTC_VRT_P vertical velocity gain (m/s per unit centroid_y)
+    AP_Float accel_comp;  // INTC_ACMP forward-accel to upward-vel compensation gain
+    AP_Float timeout_ms;  // INTC_TOUT seeker data timeout (ms)
 };
 #endif

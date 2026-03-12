@@ -1,5 +1,6 @@
 #include "mode.h"
 #include "Plane.h"
+#include <AP_Seeker/AP_Seeker.h>
 
 const AP_Param::GroupInfo ModeIntercept::var_info[] = {
     // @Param: THR
@@ -41,20 +42,20 @@ const AP_Param::GroupInfo ModeIntercept::var_info[] = {
 bool ModeIntercept::_enter()
 {
     // Reset seeker state so stale data doesn't immediately drive commands
-    plane.seeker_state.target_found = false;
+    AP_Seeker::State s{};
+    plane.seeker.handle_seeker_target(s);
     return true;
 }
 
 void ModeIntercept::update()
 {
-    const uint32_t now_ms = AP_HAL::millis();
-    const bool data_valid = plane.seeker_state.target_found &&
-                            (now_ms - plane.seeker_state.last_update_ms) < (uint32_t)timeout_ms.get();
+    const bool data_valid = AP::seeker()->is_valid((uint32_t)timeout_ms.get());
+    const AP_Seeker::State &st = AP::seeker()->get_state();
 
     if (data_valid) {
         // Null X LOS rate by rolling, Y LOS rate by pitching
-        plane.nav_roll_cd  = (int32_t)(plane.seeker_state.los_rate_x * roll_gain.get());
-        plane.nav_pitch_cd = (int32_t)(plane.seeker_state.los_rate_y * pitch_gain.get());
+        plane.nav_roll_cd  = (int32_t)(st.los_rate_x * roll_gain.get());
+        plane.nav_pitch_cd = (int32_t)(st.los_rate_y * pitch_gain.get());
     } else {
         // No valid seeker data — fly straight and level
         plane.nav_roll_cd  = 0;

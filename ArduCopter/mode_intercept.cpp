@@ -63,17 +63,17 @@ bool ModeIntercept::init(bool ignore_checks)
         return false;
     }
 
-    // initialise horizontal speed and acceleration limits
-    pos_control->NE_set_max_speed_accel_m(wp_nav->get_default_speed_NE_ms(), wp_nav->get_wp_acceleration_mss());
-    pos_control->NE_set_correction_speed_accel_m(wp_nav->get_default_speed_NE_ms(), wp_nav->get_wp_acceleration_mss());
+    // initialise horizontal speed and acceleration limits (4.6.x API: cms units)
+    pos_control->set_max_speed_accel_xy(wp_nav->get_default_speed_xy(), wp_nav->get_wp_acceleration());
+    pos_control->set_correction_speed_accel_xy(wp_nav->get_default_speed_xy(), wp_nav->get_wp_acceleration());
 
-    // initialise vertical speed and acceleration limits
-    pos_control->D_set_max_speed_accel_m(wp_nav->get_default_speed_down_ms(), wp_nav->get_default_speed_up_ms(), wp_nav->get_accel_D_mss());
-    pos_control->D_set_correction_speed_accel_m(wp_nav->get_default_speed_down_ms(), wp_nav->get_default_speed_up_ms(), wp_nav->get_accel_D_mss());
+    // initialise vertical speed and acceleration limits (4.6.x API: cms units)
+    pos_control->set_max_speed_accel_z(-wp_nav->get_default_speed_down(), wp_nav->get_default_speed_up(), wp_nav->get_accel_z());
+    pos_control->set_correction_speed_accel_z(-wp_nav->get_default_speed_down(), wp_nav->get_default_speed_up(), wp_nav->get_accel_z());
 
     // initialise position controllers
-    pos_control->NE_init_controller();
-    pos_control->D_init_controller();
+    pos_control->init_xy_controller();
+    pos_control->init_z_controller();
 
     // hold current yaw
     auto_yaw.set_mode(AutoYaw::Mode::HOLD);
@@ -96,28 +96,32 @@ void ModeIntercept::run()
         const AP_Seeker::State &st = AP::seeker()->get_state();
 
         // --- Yaw: null horizontal centroid error via yaw rate ---
+        // 4.6.x: set_rate takes centidegrees/s; convert rad/s → cds
         const float yaw_rate_rads = yaw_p.get() * st.centroid_x + yaw_d.get() * st.los_rate_x;
-        auto_yaw.set_rate_rad(yaw_rate_rads);
+        auto_yaw.set_mode(AutoYaw::Mode::RATE);
+        auto_yaw.set_rate(degrees(yaw_rate_rads) * 100.0f);
 
         // --- Vertical: drive centroid_y to zero; compensate for pitch-tilt coupling ---
+        // 4.6.x: input_vel_accel_z uses cm/s, Z positive = down (NED)
         const float body_accel_fwd = ahrs.get_accel().x;
-        const float vel_up = vrt_p.get() * st.centroid_y + accel_comp.get() * body_accel_fwd;
-        float vel_D = -vel_up;  // NED: positive = down
-        const float zero_accel_D = 0.0f;
-        pos_control->input_vel_accel_D_m(vel_D, zero_accel_D, false);
+        const float vel_up_ms = vrt_p.get() * st.centroid_y + accel_comp.get() * body_accel_fwd;
+        float vel_z_cms = -vel_up_ms * 100.0f;  // up→down sign flip, m→cm
+        const float zero_accel_z = 0.0f;
+        pos_control->input_vel_accel_z(vel_z_cms, zero_accel_z, false);
 
         // --- Forward: constant speed in current heading direction ---
+        // 4.6.x: input_vel_accel_xy uses cm/s
         const float yaw_rad = ahrs.get_yaw();
-        Vector2f vel_ne;
-        vel_ne.x = speed.get() * cosf(yaw_rad);  // North
-        vel_ne.y = speed.get() * sinf(yaw_rad);  // East
-        Vector2f zero_accel_ne;
-        pos_control->input_vel_accel_NE_m(vel_ne, zero_accel_ne, false);
+        Vector2f vel_xy_cms;
+        vel_xy_cms.x = speed.get() * 100.0f * cosf(yaw_rad);  // North cm/s
+        vel_xy_cms.y = speed.get() * 100.0f * sinf(yaw_rad);  // East  cm/s
+        Vector2f zero_accel_xy;
+        pos_control->input_vel_accel_xy(vel_xy_cms, zero_accel_xy, false);
     }
 
     // update position controllers
-    pos_control->NE_update_controller();
-    pos_control->D_update_controller();
+    pos_control->update_xy_controller();
+    pos_control->update_z_controller();
 
     // call attitude controller
     attitude_control->input_thrust_vector_heading(pos_control->get_thrust_vector(), auto_yaw.get_heading());
@@ -126,14 +130,15 @@ void ModeIntercept::run()
 // Seeker timeout fallback: hold position with zero velocity
 void ModeIntercept::run_position_hold()
 {
-    Vector2f vel_ne_zero;
-    Vector2f accel_ne_zero;
-    pos_control->input_vel_accel_NE_m(vel_ne_zero, accel_ne_zero, false);
+    // 4.6.x API: input_vel_accel_xy / input_vel_accel_z use cm/s
+    Vector2f vel_xy_zero;
+    Vector2f accel_xy_zero;
+    pos_control->input_vel_accel_xy(vel_xy_zero, accel_xy_zero, false);
 
-    float vel_d_zero = 0.0f;
-    pos_control->input_vel_accel_D_m(vel_d_zero, 0.0f, false);
+    float vel_z_zero = 0.0f;
+    pos_control->input_vel_accel_z(vel_z_zero, 0.0f, false);
 
-    auto_yaw.set_rate_rad(0.0f);
+    auto_yaw.set_mode(AutoYaw::Mode::HOLD);
 }
 
 #endif  // MODE_INTERCEPT_ENABLED

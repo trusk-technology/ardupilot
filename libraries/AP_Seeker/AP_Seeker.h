@@ -8,6 +8,8 @@ public:
         float    los_rate_y;      // rad/s, positive = target moving up
         float    centroid_x;      // fraction of FOV width  (-0.5…+0.5)
         float    centroid_y;      // fraction of FOV height (-0.5…+0.5)
+        float    bbox_w;          // fraction of FOV width  (0 = unknown)
+        float    bbox_h;          // fraction of FOV height (0 = unknown)
         uint32_t last_update_ms;
         bool     target_found;
     };

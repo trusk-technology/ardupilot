@@ -1326,6 +1326,8 @@ void GCS_MAVLINK_Plane::handle_seeker_target(const mavlink_message_t &msg)
     s.los_rate_y     = pkt.los_rate_y;
     s.centroid_x     = pkt.centroid_x;
     s.centroid_y     = pkt.centroid_y;
+    s.bbox_w         = pkt.bbox_w;
+    s.bbox_h         = pkt.bbox_h;
     s.target_found   = (pkt.target_found != 0);
     s.last_update_ms = AP_HAL::millis();
     plane.seeker.handle_seeker_target(s);

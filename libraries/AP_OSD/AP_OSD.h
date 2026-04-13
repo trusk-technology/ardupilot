@@ -236,6 +236,7 @@ private:
     AP_OSD_Setting pluscode;
 #endif
     AP_OSD_Setting sidebars{false, 4, 5};
+    AP_OSD_Setting seeker_box{false, 15, 8};
 
 #if AP_OSD_EXTENDED_LNK_STATS
     // Extended link stats data panels
@@ -290,6 +291,7 @@ private:
 #ifdef HAL_OSD_SIDEBAR_ENABLE
     void draw_sidebars(uint8_t x, uint8_t y);
 #endif
+    void draw_seeker_box(uint8_t x, uint8_t y);
     void draw_compass(uint8_t x, uint8_t y);
     void draw_wind(uint8_t x, uint8_t y);
     void draw_aspeed(uint8_t x, uint8_t y);

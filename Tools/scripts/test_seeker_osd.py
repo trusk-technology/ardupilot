@@ -18,15 +18,31 @@ mav = connect('tcp:127.0.0.1:5760')
 wait_ekf_ready(mav, settle=2)
 
 print('\n── Setting params ──')
+# OSD_TYPE may be persisted in eeprom.bin from a previous run, which means the
+# SFML backend was already constructed at boot using the default SIM_OSD_ROWS=16.
+# Tear it down first (OSD_TYPE=0), resize the window, then re-enable it so the
+# new backend reads the updated row/column counts.
+set_param(mav, 'OSD_TYPE', 0)
+print('  OSD_TYPE = 0  (tear down existing backend)')
+time.sleep(0.3)
+
 for name, val in [
-    ('OSD_TYPE',          2),     # SITL SFML renderer
+    ('SIM_OSD_ROWS',     22),     # expand window to full PAL height (default 16)
+    ('SIM_OSD_COLUMNS',  30),
+]:
+    set_param(mav, name, val)
+    print(f'  {name} = {val}')
+time.sleep(0.5)   # let the params settle before creating the backend
+
+for name, val in [
+    ('OSD_TYPE',          2),     # SITL SFML renderer — creates backend now
     ('OSD1_ENABLE',       1),
     ('OSD1_SEEKRBOX_EN',  1),
     ('OSD1_SEEKRBOX_X',  15),
     ('OSD1_SEEKRBOX_Y',   8),
     ('OSD1_CALLSIGN_EN',  1),
-    ('OSD1_CALLSIGN_X',   1),
-    ('OSD1_CALLSIGN_Y',  20),
+    ('OSD1_CALLSIGN_X',  24),
+    ('OSD1_CALLSIGN_Y',  14),   
     ('INTC_SPEED',       3.0),
     ('INTC_YAW_P',       2.0),
     ('INTC_YAW_D',       0.3),

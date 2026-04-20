@@ -76,6 +76,14 @@ wait_ekf_ready(mav, settle=3)
 # ── Step 1: Set INTC_ params, arm in STABILIZE, switch to GUIDED ─────────────
 print('\n── Step 1: Set INTC_ params, arm, guided ──')
 
+# Enable the seeker_box OSD panel on screen 1
+for name, val in [('OSD_TYPE', 2),          # 2 = SITL renderer
+                  ('OSD1_SEEKRBOX_EN', 1),
+                  ('OSD1_SEEKRBOX_X', 15),
+                  ('OSD1_SEEKRBOX_Y', 8)]:
+    set_param(mav, name, val)
+    print(f'  {name} = {val}')
+
 # Set INTC_ params explicitly (AP_SUBGROUPPTR init ordering can leave them 0)
 for name, val in [('INTC_SPEED', 3.0), ('INTC_YAW_P', 2.0), ('INTC_YAW_D', 0.3),
                   ('INTC_VRT_P', 3.0), ('INTC_ACMP', 0.5), ('INTC_TOUT', 500.0)]:
@@ -185,7 +193,11 @@ while True:
 
     if seeker_live:
         tboot = int(time.monotonic() * 1000) & 0xFFFFFFFF
-        mav.mav.seeker_target_send(tboot, los_rate_x, los_rate_y, cx, cy, 1)
+        # bbox_w/h simulate a target that fills ~10% of FOV in each axis
+        bbox_w = 0.10
+        bbox_h = 0.10
+        mav.mav.seeker_target_send(tboot, los_rate_x, los_rate_y, cx, cy, 1,
+                                   bbox_w, bbox_h)
 
     att = mav.recv_match(type='ATTITUDE', blocking=False)
     yaw_rate = att.yawspeed if att else float('nan')

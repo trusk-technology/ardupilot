@@ -49,6 +49,7 @@
 #include <AP_WindVane/AP_WindVane.h>
 #endif
 #include <AP_Filesystem/AP_Filesystem.h>
+#include <AP_Seeker/AP_Seeker.h>
 
 #include <ctype.h>
 #include <GCS_MAVLink/GCS.h>
@@ -1067,6 +1068,22 @@ const AP_Param::GroupInfo AP_OSD_Screen::var_info2[] = {
     // @Description: Vertical position on screen
     // @Range: 0 21
     AP_SUBGROUPINFO(link_quality, "LINK_Q", 1, AP_OSD_Screen, AP_OSD_Setting),
+
+    // @Param: SEEKRBOX_EN
+    // @DisplayName: SEEKRBOX_EN
+    // @Description: Displays seeker target bounding box and PN guidance arrow
+    // @Values: 0:Disabled,1:Enabled
+
+    // @Param: SEEKRBOX_X
+    // @DisplayName: SEEKRBOX_X
+    // @Description: Horizontal position on screen
+    // @Range: 0 59
+
+    // @Param: SEEKRBOX_Y
+    // @DisplayName: SEEKRBOX_Y
+    // @Description: Vertical position on screen
+    // @Range: 0 21
+    AP_SUBGROUPINFO(seeker_box, "SEEKRBOX", 11, AP_OSD_Screen, AP_OSD_Setting),
 
 #if HAL_WITH_MSP_DISPLAYPORT
     // @Param: TXT_RES
@@ -2550,6 +2567,76 @@ void AP_OSD_Screen::draw_rngf(uint8_t x, uint8_t y)
 }
 #endif
 
+void AP_OSD_Screen::draw_seeker_box(uint8_t x, uint8_t y)
+{
+    const AP_Seeker *seeker = AP_Seeker::get_singleton();
+    if (seeker == nullptr || !seeker->is_valid(1000)) {
+        return;
+    }
+    const AP_Seeker::State &st = seeker->get_state();
+
+    // Display region: how many OSD chars correspond to the full camera FOV
+    static const int W = 20;   // characters across full FOV width
+    static const int H = 10;   // characters across full FOV height
+
+    const float cx_fov = st.centroid_x;  // -0.5 (left) … +0.5 (right)
+    const float cy_fov = st.centroid_y;  // -0.5 (bottom) … +0.5 (top)
+
+    const bool on_screen = fabsf(cx_fov) <= 0.5f && fabsf(cy_fov) <= 0.5f;
+
+    if (!on_screen) {
+        // Draw directional indicator at nearest display edge
+        int ex = x;
+        int ey = y;
+        char indicator;
+        if (cx_fov > 0.5f) {
+            ex = x + W/2; ey = y - (int)roundf(constrain_float(cy_fov, -0.5f, 0.5f) * H);
+            indicator = '>';
+        } else if (cx_fov < -0.5f) {
+            ex = x - W/2; ey = y - (int)roundf(constrain_float(cy_fov, -0.5f, 0.5f) * H);
+            indicator = '<';
+        } else if (cy_fov > 0.5f) {
+            ex = x + (int)roundf(cx_fov * W); ey = y - H/2;
+            indicator = '^';
+        } else {
+            ex = x + (int)roundf(cx_fov * W); ey = y + H/2;
+            indicator = 'v';
+        }
+        backend->write(ex, ey, false, "%c", indicator);
+        return;
+    }
+
+    // Map centroid to OSD character position (OSD y increases downward; FOV y increases upward)
+    int cx = x + (int)roundf(cx_fov * W);
+    int cy = y - (int)roundf(cy_fov * H);
+
+    // Bounding box half-extents (minimum 1 char so something is visible)
+    int hw = MAX(1, (int)roundf(st.bbox_w * W / 2));
+    int hh = MAX(1, (int)roundf(st.bbox_h * H / 2));
+
+    // Draw four corners
+    backend->write(cx - hw, cy - hh, false, "+");
+    backend->write(cx + hw, cy - hh, false, "+");
+    backend->write(cx - hw, cy + hh, false, "+");
+    backend->write(cx + hw, cy + hh, false, "+");
+
+    // Centroid crosshair
+    backend->write(cx, cy, false, "%c", SYMBOL(SYM_AH_CENTER));
+
+    // Proportional-navigation guidance arrow.
+    // PN nulls the LOS rate; the commanded correction is in the direction of the LOS rate.
+    //   los_rate_x > 0 → target moving right → yaw right  (east = 9000 cd)
+    //   los_rate_y > 0 → target moving up    → pitch up   (north = 0 cd)
+    // atan2f(east, north) gives bearing_rad.
+    const float los_magnitude = sqrtf(st.los_rate_x * st.los_rate_x + st.los_rate_y * st.los_rate_y);
+    if (los_magnitude > 0.02f) {   // ~1 deg/s threshold to ignore sensor noise
+        float bearing_rad = atan2f(st.los_rate_x, st.los_rate_y);
+        int32_t angle_cd  = (int32_t)(bearing_rad * RAD_TO_DEG * 100.0f);
+        char arrow = get_arrow_font_index(angle_cd);
+        backend->write(cx + hw + 1, cy, false, "%c", arrow);
+    }
+}
+
 #define DRAW_SETTING(n) if (n.enabled) draw_ ## n(n.xpos, n.ypos)
 
 #if HAL_WITH_OSD_BITMAP || HAL_WITH_MSP_DISPLAYPORT
@@ -2641,6 +2728,7 @@ void AP_OSD_Screen::draw(void)
     DRAW_SETTING(eff);
     DRAW_SETTING(callsign);
     DRAW_SETTING(current2);
+    DRAW_SETTING(seeker_box);
 
 #if AP_OSD_EXTENDED_LNK_STATS
     DRAW_SETTING(rc_tx_power);
